@@ -1,0 +1,77 @@
+import tkinter as tk
+import RPi.GPIO as GPIO
+import time
+import threading
+
+# GPIO setup
+GPIO.setmode(GPIO.BOARD)
+GPIO.setwarnings(False)
+
+WHITE = 8     # GPIO11
+YELLOW = 10   # GPIO13
+GREEN = 12    # GPIO15
+
+LEDS = {"white": WHITE, "yellow": YELLOW, "green": GREEN}
+
+for pin in LEDS.values():
+    GPIO.setup(pin, GPIO.OUT)
+
+# Setup PWM (frequency = 100Hz)
+pwm = {color: GPIO.PWM(pin, 100) for color, pin in LEDS.items()}
+for p in pwm.values():
+    p.start(0)  # start with 0% duty cycle
+
+# GUI setup
+window = tk.Tk()
+window.title("LED Brightness Control (Task 5.2C)")
+
+# Functions
+def set_brightness(color, value):
+    """Update LED brightness from slider"""
+    duty_cycle = int(value)
+    pwm[color].ChangeDutyCycle(duty_cycle)
+
+def timer_function():
+    """Automatically change LED brightness over time"""
+    def run_timer():
+        for duty in range(0, 101, 5):  # Fade in
+            pwm["white"].ChangeDutyCycle(duty)
+            pwm["yellow"].ChangeDutyCycle(100 - duty)
+            time.sleep(0.1)
+        for duty in range(100, -1, -5):  # Fade out
+            pwm["white"].ChangeDutyCycle(duty)
+            pwm["yellow"].ChangeDutyCycle(100 - duty)
+            time.sleep(0.1)
+    threading.Thread(target=run_timer, daemon=True).start()
+
+def close():
+    """Exit program safely"""
+    for p in pwm.values():
+        p.stop()
+    GPIO.cleanup()
+    window.destroy()
+
+# Sliders for LED brightness
+tk.Label(window, text="White LED").pack()
+white_slider = tk.Scale(window, from_=0, to=100, orient="horizontal",
+                        command=lambda val: set_brightness("white", val))
+white_slider.pack()
+
+tk.Label(window, text="Yellow LED").pack()
+yellow_slider = tk.Scale(window, from_=0, to=100, orient="horizontal",
+                         command=lambda val: set_brightness("yellow", val))
+yellow_slider.pack()
+
+tk.Label(window, text="Green LED").pack()
+green_slider = tk.Scale(window, from_=0, to=100, orient="horizontal",
+                        command=lambda val: set_brightness("green", val))
+green_slider.pack()
+
+# Timer button for SIT730 extension
+tk.Button(window, text="Start Timer Effect", command=timer_function).pack(pady=5)
+
+# Exit button
+tk.Button(window, text="Exit", command=close).pack(pady=10)
+
+# Start GUI
+window.mainloop()
