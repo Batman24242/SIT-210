@@ -1,0 +1,153 @@
+/*
+  Example using SAMD + DHT22
+  - Uses SAMDTimerInterrupt to make a timer tick every second
+  - Button press toggles LED1 (with debounce)
+  - PIR sensor toggles LED2 (with debounce)
+  - Timer toggles LED3 every 1s
+  - DHT22 reads temp/humidity every 2s
+*/
+
+#include <SAMDTimerInterrupt.h>  // Timer library for SAMD boards
+#include "DHT.h"                 // DHT sensor library
+
+// ----------------------------- PIN SETUP -----------------------------
+#define BUTTON_PIN 2   // Push button on pin 2 (internal pull-up used)
+#define PIR_PIN    3   // PIR sensor connected to pin 3
+#define DHT_PIN    4   // DHT22 data pin
+#define LED1_PIN   8   // LED1 controlled by button
+#define LED2_PIN   9   // LED2 controlled by PIR
+#define LED3_PIN   10  // LED3 controlled by timer
+
+// ----------------------------- DHT CONFIG ----------------------------
+#define DHTTYPE DHT22
+DHT dht(DHT_PIN, DHTTYPE);   // Create DHT object
+
+// ----------------------------- TIMER OBJECT --------------------------
+SAMDTimer ITimer0(TIMER_TC3); // Use TC3 timer for interrupts
+
+// ----------------------------- FLAGS -------------------------------
+// Flags are changed inside interrupts, so they must be volatile
+volatile bool led1ToggleFlag = false; // Button pressed
+volatile bool led2ToggleFlag = false; // PIR triggered
+volatile bool timerFlag      = false; // Timer tick
+
+// ----------------------------- LED STATES ---------------------------
+bool led1State = LOW;
+bool led2State = LOW;
+bool led3State = LOW;
+
+// ----------------------------- TIMERS FOR DEBOUNCE -----------------
+unsigned long lastButtonTime = 0;
+unsigned long lastPirTime    = 0;
+unsigned long lastDHTRead    = 0;
+
+// ----------------------------- ISR HANDLERS -------------------------
+// Keep ISRs short: just set a flag
+
+void handleButton() {
+  led1ToggleFlag = true;  // Button was pressed
+}
+
+void handlePIR() {
+  led2ToggleFlag = true;  // PIR triggered
+}
+
+void TimerHandler() {
+  timerFlag = true;       // Timer ticked
+}
+
+// ----------------------------- INIT SETUP ----------------------------
+void initializeSystem() {
+  Serial.begin(115200);
+  delay(2000);
+  Serial.println("Starting program (Timer = 1s, DHT read = 2s)...");
+
+  // LED pins as outputs
+  pinMode(LED1_PIN, OUTPUT);
+  pinMode(LED2_PIN, OUTPUT);
+  pinMode(LED3_PIN, OUTPUT);
+
+  // Inputs
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(PIR_PIN, INPUT);
+
+  // Start DHT
+  dht.begin();
+  delay(2000);
+
+  // Attach interrupts
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), handleButton, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIR_PIN), handlePIR, RISING);
+
+  // Setup timer for 1s interval
+  if (ITimer0.attachInterruptInterval(1000000, TimerHandler)) {
+    Serial.println("Timer started (1s)");
+  } else {
+    Serial.println("Timer setup failed!");
+  }
+}
+
+// ----------------------------- HANDLERS ------------------------------
+
+// Button handling (with debounce)
+void processButton(unsigned long now) {
+  if (led1ToggleFlag && (now - lastButtonTime > 200)) {
+    led1ToggleFlag = false;
+    lastButtonTime = now;
+    led1State = !led1State;
+    digitalWrite(LED1_PIN, led1State);
+    Serial.println("Button pressed -> LED1 changed");
+  }
+}
+
+// PIR handling (with debounce)
+void processPIR(unsigned long now) {
+  if (led2ToggleFlag && (now - lastPirTime > 500)) {
+    led2ToggleFlag = false;
+    lastPirTime = now;
+    led2State = !led2State;
+    digitalWrite(LED2_PIN, led2State);
+    Serial.println("Motion detected -> LED2 changed");
+  }
+}
+
+// DHT read every 2s
+void attemptDHTRead(unsigned long now) {
+  if (now - lastDHTRead >= 2000) {
+    lastDHTRead = now;
+    float temp = dht.readTemperature();
+    float hum  = dht.readHumidity();
+
+    if (isnan(temp) || isnan(hum)) {
+      Serial.println("DHT read failed!");
+    } else {
+      Serial.print("Timer -> LED3 toggled | Temp: ");
+      Serial.print(temp);
+      Serial.print(" °C, Hum: ");
+      Serial.print(hum);
+      Serial.println(" %");
+    }
+  }
+}
+
+// Timer handling
+void processTimer(unsigned long now) {
+  if (timerFlag) {
+    timerFlag = false;
+    led3State = !led3State;
+    digitalWrite(LED3_PIN, led3State);
+    attemptDHTRead(now);
+  }
+}
+
+// ----------------------------- MAIN PROGRAM --------------------------
+void setup() {
+  initializeSystem();
+}
+
+void loop() {
+  unsigned long now = millis();
+  processButton(now);
+  processPIR(now);
+  processTimer(now);
+}
