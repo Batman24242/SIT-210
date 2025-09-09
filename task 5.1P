@@ -1,0 +1,52 @@
+import tkinter as tk
+import RPi.GPIO as GPIO
+
+# GPIO setup
+GPIO.setmode(GPIO.BOARD)
+GPIO.setwarnings(False)
+
+WHITE = 8     # Pin 8
+YELLOW = 10   # Pin 10
+GREEN = 12    # Pin 12
+
+LEDS = [WHITE, YELLOW, GREEN]
+
+for pin in LEDS:
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, GPIO.LOW)
+
+# GUI setup
+window = tk.Tk()
+window.title("LED Control")
+
+# Functions
+def turn_on_led(color):
+    # Turn off all LEDs first
+    for pin in LEDS:
+        GPIO.output(pin, GPIO.LOW)
+    # Turn on the selected LED
+    if color == "white":
+        GPIO.output(WHITE, GPIO.HIGH)
+    elif color == "yellow":
+        GPIO.output(YELLOW, GPIO.HIGH)
+    elif color == "green":
+        GPIO.output(GREEN, GPIO.HIGH)
+
+def close():
+    GPIO.cleanup()
+    window.destroy()
+
+# Radio buttons
+selected_color = tk.StringVar()
+
+tk.Radiobutton(window, text="White", variable=selected_color, value="white",
+               command=lambda: turn_on_led("white")).pack()
+tk.Radiobutton(window, text="Yellow", variable=selected_color, value="yellow",
+               command=lambda: turn_on_led("yellow")).pack()
+tk.Radiobutton(window, text="Green", variable=selected_color, value="green",
+               command=lambda: turn_on_led("green")).pack()
+
+# Exit button
+tk.Button(window, text="Exit", command=close).pack()
+
+window.mainloop()
