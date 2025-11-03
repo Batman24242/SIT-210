@@ -1,0 +1,71 @@
+const int buttonPin = 3;   // push button input
+const int sensorPin = 2;   // PIR / light sensor input
+const int redLED   = 7;    // LED 1
+const int greenLED = 8;    // LED 2
+
+// LED states
+volatile bool redState   = LOW;
+volatile bool greenState = LOW;
+
+// debounce variables
+volatile unsigned long lastButtonTime = 0;
+volatile unsigned long lastSensorTime = 0;
+const unsigned long debounceDelay = 200; // ms
+
+// --- Interrupt function for Button ---
+void onButtonPress() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastButtonTime > debounceDelay) {
+    redState = !redState;
+    digitalWrite(redLED, redState);
+    Serial.print("[BUTTON] -> LED1 is now ");
+    Serial.println(redState ? "ON" : "OFF");
+    lastButtonTime = currentTime;
+  }
+}
+
+// --- Interrupt function for Sensor ---
+void onSensorTrigger() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastSensorTime > debounceDelay) {
+    greenState = !greenState;
+    digitalWrite(greenLED, greenState);
+    Serial.print("[SENSOR] -> Motion/Light change detected! LED2 ");
+    Serial.println(greenState ? "turned ON" : "turned OFF");
+    lastSensorTime = currentTime;
+
+    // brief blink feedback
+    if (greenState) {
+      delay(100);
+      digitalWrite(greenLED, LOW);
+      delay(100);
+      digitalWrite(greenLED, HIGH);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  delay(500);
+  Serial.println("---- Multiple Interrupts Demo ----");
+
+  // setup LEDs
+  pinMode(redLED, OUTPUT);
+  pinMode(greenLED, OUTPUT);
+  digitalWrite(redLED, LOW);
+  digitalWrite(greenLED, LOW);
+
+  // setup button and sensor
+  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(sensorPin, INPUT);
+
+  // attach interrupts
+  attachInterrupt(digitalPinToInterrupt(buttonPin), onButtonPress, FALLING);
+  attachInterrupt(digitalPinToInterrupt(sensorPin), onSensorTrigger, RISING);
+
+  Serial.println("System ready. Press button or trigger sensor to test.\n");
+}
+
+void loop() {
+  // main loop intentionally empty – handled entirely by interrupts
+}
