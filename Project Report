@@ -1,0 +1,458 @@
+// garbage_bot.ino – Arduino Nano 33 IoT Code
+
+#include <Arduino.h>
+
+// === PINS ===
+#define IN1 10
+#define IN2 11
+#define IN3 12
+#define IN4 13
+#define ENA 5
+#define ENB 6
+
+#define TRIG_FC 2
+#define ECHO_FC 3
+#define TRIG_FL 8
+#define ECHO_FL A0
+#define TRIG_FR A1
+#define ECHO_FR A2
+#define TRIG_REAR A3
+#define ECHO_REAR A4
+
+#define LED_CLEAR A5
+#define LED_OBSTACLE A6
+#define SWITCH_PIN 9
+
+// === CONSTANTS ===
+const int OBSTACLE_DISTANCE = 40;
+const int REVERSE_DISTANCE = 30;
+const int base_speed = 100;
+const int reverse_speed = 110;
+const int turn_pivot_speed = 200;
+
+// === STATE ===
+String command = "";
+bool autonomous = true;
+bool robotActive = false;
+bool lidOpen = false;
+
+void setup() {
+  Serial1.begin(9600);
+  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+  pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
+
+  pinMode(TRIG_FC, OUTPUT); pinMode(ECHO_FC, INPUT);
+  pinMode(TRIG_FL, OUTPUT); pinMode(ECHO_FL, INPUT);
+  pinMode(TRIG_FR, OUTPUT); pinMode(ECHO_FR, INPUT);
+  pinMode(TRIG_REAR, OUTPUT); pinMode(ECHO_REAR, INPUT);
+
+  pinMode(LED_CLEAR, OUTPUT); pinMode(LED_OBSTACLE, OUTPUT);
+  pinMode(SWITCH_PIN, INPUT_PULLUP);
+
+  digitalWrite(LED_CLEAR, LOW); digitalWrite(LED_OBSTACLE, LOW);
+  stopBot();
+  startupSequence();
+}
+
+void loop() {
+  robotActive = (digitalRead(SWITCH_PIN) == LOW);
+  if (robotActive) {
+    readPiCommand();
+    if (autonomous) runRobotLogic();
+  } else {
+    stopBot();
+  }
+  delay(10);
+}
+
+// === STARTUP LIGHT SHOW ===
+void startupSequence() {
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(LED_CLEAR, HIGH); delay(200);
+    digitalWrite(LED_CLEAR, LOW); delay(200);
+  }
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(LED_OBSTACLE, HIGH); delay(200);
+    digitalWrite(LED_OBSTACLE, LOW); delay(200);
+  }
+  Serial1.println("READY");
+}
+
+// === MOTOR CONTROL ===
+void forward() {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  analogWrite(ENA, base_speed); analogWrite(ENB, base_speed);
+  Serial1.println("MOVING_FORWARD");
+}
+
+void backward() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+  analogWrite(ENA, reverse_speed); analogWrite(ENB, reverse_speed);
+  Serial1.println("MOVING_BACKWARD");
+}
+
+void turnLeft(int duration_ms) {
+  digitalWrite(IN1, LOW);  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);  digitalWrite(IN4, HIGH);
+  analogWrite(ENA, 0); analogWrite(ENB, turn_pivot_speed);
+  Serial1.println("TURNING_LEFT");
+  delay(duration_ms);
+  stopBot();
+}
+
+void turnRight(int duration_ms) {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);  digitalWrite(IN4, LOW);
+  analogWrite(ENA, turn_pivot_speed); analogWrite(ENB, 0);
+  Serial1.println("TURNING_RIGHT");
+  delay(duration_ms);
+  stopBot();
+}
+
+void stopBot() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+  analogWrite(ENA, 0); analogWrite(ENB, 0);
+  Serial1.println("STOPPED");
+}
+
+// === ULTRASONIC ===
+int getDistance(int trig, int echo) {
+  digitalWrite(trig, LOW); delayMicroseconds(2);
+  digitalWrite(trig, HIGH); delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+  long duration = pulseIn(echo, HIGH, 30000);
+  return (duration > 0) ? duration * 0.034 / 2 : 999;
+}
+
+void sendSensorData() {
+  int fc = getDistance(TRIG_FC, ECHO_FC);
+  int fl = getDistance(TRIG_FL, ECHO_FL);
+  int fr = getDistance(TRIG_FR, ECHO_FR);
+  int r = getDistance(TRIG_REAR, ECHO_REAR);
+  Serial1.print("SENSORS:"); Serial1.print(fc); Serial1.print(",");
+  Serial1.print(fl); Serial1.print(","); Serial1.print(fr); Serial1.print(",");
+  Serial1.println(r);
+}
+
+// === AUTONOMOUS LOGIC ===
+void runRobotLogic() {
+  int fc = getDistance(TRIG_FC, ECHO_FC);
+  int fl = getDistance(TRIG_FL, ECHO_FL);
+  int fr = getDistance(TRIG_FR, ECHO_FR);
+  int r = getDistance(TRIG_REAR, ECHO_REAR);
+
+  digitalWrite(LED_CLEAR, HIGH); digitalWrite(LED_OBSTACLE, LOW);
+
+  if (fc < OBSTACLE_DISTANCE) {
+    digitalWrite(LED_OBSTACLE, HIGH); digitalWrite(LED_CLEAR, LOW);
+    Serial1.println("OBSTACLE_FRONT");
+    stopBot();
+    if (fl < fr) turnRight(300); else turnLeft(300);
+  }
+  else if (r < REVERSE_DISTANCE && !lidOpen) {
+    Serial1.println("OBSTACLE_REAR");
+    forward(); delay(300); stopBot();
+  }
+  else {
+    forward();
+  }
+  sendSensorData();
+  delay(50);
+}
+
+// === PI COMMANDS ===
+void readPiCommand() {
+  if (Serial1.available()) {
+    command = Serial1.readStringUntil('\n');
+    command.trim();
+
+    if (command == "MODE_AUTONOMOUS") {
+      autonomous = true; lidOpen = false;
+      Serial1.println("MODE_AUTONOMOUS");
+    }
+    else if (command == "MODE_REMOTE") {
+      autonomous = false; lidOpen = false;
+      stopBot(); Serial1.println("MODE_REMOTE");
+    }
+    else if (!autonomous && robotActive && !lidOpen) {
+      if (command == "FORWARD") forward();
+      else if (command == "BACKWARD") backward();
+      else if (command == "LEFT") turnLeft(300);
+      else if (command == "RIGHT") turnRight(300);
+      else if (command == "SPIN") {
+        digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+        digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+        analogWrite(ENA, turn_pivot_speed); analogWrite(ENB, turn_pivot_speed);
+        delay(1100);
+        stopBot();
+        Serial1.println("SPIN_DONE");
+      }
+      else if (command == "LID_OPEN") { lidOpen = true; Serial1.println("LID_OPEN"); }
+      else if (command == "LID_CLOSE") { lidOpen = false; Serial1.println("LID_CLOSE"); }
+      else if (command == "RESUME") { lidOpen = false; }
+      else if (command == "STOP") stopBot();
+    }
+  }
+}
+
+
+
+
+// robot_control.py – Raspberry Pi 5 Code
+
+import RPi.GPIO as GPIO
+import serial
+import time
+import random
+import pygame
+import subprocess
+import tkinter as tk
+from threading import Thread, Lock
+
+# === PINS ===
+SERVO_PIN = 18
+TRIG = 24
+ECHO = 23
+LED_WHITE = 17
+LED_YELLOW = 27
+LED_RED = 22
+LED_REMOTE = 25
+HAND_DISTANCE = 80
+VOLUME = 0.4
+SERIAL_PORT = '/dev/serial0'
+BAUD_RATE = 9600
+
+# === GPIO SETUP ===
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(SERVO_PIN, GPIO.OUT)
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
+GPIO.setup(LED_WHITE, GPIO.OUT)
+GPIO.setup(LED_YELLOW, GPIO.OUT)
+GPIO.setup(LED_RED, GPIO.OUT)
+GPIO.setup(LED_REMOTE, GPIO.OUT)
+for p in [LED_WHITE, LED_YELLOW, LED_RED, LED_REMOTE]:
+    GPIO.output(p, GPIO.LOW)
+
+servo = GPIO.PWM(SERVO_PIN, 50)
+servo.start(2.5)
+
+pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
+
+# === SERIAL LOCK ===
+serial_lock = Lock()
+
+def send(cmd):
+    with serial_lock:
+        ser.write(f"{cmd}\n".encode())
+        ser.flush()
+
+ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
+ser.flush()
+
+# === STATE ===
+autonomous = True
+hand_detected = False
+last_time = 0
+last_temp_state = "low"
+last_obstacle_time = 0
+obstacle_cleared = True
+greetings = ["Hello. Do you have any garbage today?", "Good day. Ready to recycle?", "Hi there. Got any trash for me?"]
+farewells = ["Thank you. Have a wonderful day.", "See you next time. Take care.", "Bye. Keep it clean."]
+
+# === NON-BLOCKING SPEAK ===
+def speak(text):
+    def _speak():
+        wav_file = '/tmp/speech.wav'
+        try:
+            subprocess.run([
+                'espeak', text,
+                '-s', '135', '-p', '60', '-a', '100', '-v', 'en+f3', '--stdout'
+            ], stdout=open(wav_file, 'wb'), check=True)
+            pygame.mixer.music.load(wav_file)
+            pygame.mixer.music.set_volume(VOLUME)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.1)
+        except:
+            pass
+    Thread(target=_speak, daemon=True).start()
+
+# === SERVO CONTROL ===
+def set_angle(angle):
+    angle = max(0, min(90, angle))
+    duty = 2.5 + (angle / 18)
+    servo.ChangeDutyCycle(duty)
+    time.sleep(0.8)
+    servo.ChangeDutyCycle(0)
+
+# === ULTRASONIC DISTANCE ===
+def get_distance():
+    GPIO.output(TRIG, False)
+    time.sleep(0.1)
+    GPIO.output(TRIG, True)
+    time.sleep(0.00001)
+    GPIO.output(TRIG, False)
+    start = stop = time.time()
+    while GPIO.input(ECHO) == 0:
+        start = time.time()
+    while GPIO.input(ECHO) == 1:
+        stop = time.time()
+    return round((stop - start) * 17150, 2)
+
+# === LED CONTROL ===
+def set_temp_leds(level):
+    for p in [LED_WHITE, LED_YELLOW, LED_RED]: GPIO.output(p, GPIO.LOW)
+    if level == "low": GPIO.output(LED_WHITE, GPIO.HIGH)
+    elif level == "med": GPIO.output(LED_YELLOW, GPIO.HIGH)
+    elif level == "high": GPIO.output(LED_RED, GPIO.HIGH)
+
+def set_remote_led(state):
+    GPIO.output(LED_REMOTE, state)
+
+# === UART LISTENER ===
+def uart_listener():
+    global autonomous, last_obstacle_time, obstacle_cleared
+    while True:
+        if ser.in_waiting:
+            try:
+                msg = ser.readline().decode('utf-8', errors='ignore').strip()
+                if "MODE_AUTONOMOUS" in msg:
+                    autonomous = True
+                    set_remote_led(False)
+                    speak("Autonomous mode")
+                elif "MODE_REMOTE" in msg:
+                    autonomous = False
+                    set_remote_led(True)
+                    speak("Manual mode")
+                elif "OBSTACLE" in msg and autonomous:
+                    current_time = time.time()
+                    if not obstacle_cleared and (current_time - last_obstacle_time > 4):
+                        if "REAR" in msg:
+                            speak("Reversing back. Please give me some space.")
+                        else:
+                            speak("Obstacle detected")
+                        last_obstacle_time = current_time
+                    elif "SENSORS:" in msg:
+                        parts = msg.split(":")[1].split(",")
+                        if len(parts) == 4:
+                            fc = int(parts[0])
+                            if fc > 50:
+                                obstacle_cleared = True
+                            else:
+                                obstacle_cleared = False
+                                last_obstacle_time = current_time
+            except:
+                pass
+        time.sleep(0.01)
+
+# === LID THREAD (AUTO ONLY) ===
+def lid_thread():
+    global hand_detected, last_time
+    while True:
+        if autonomous:
+            dist = get_distance()
+            if dist <= HAND_DISTANCE and dist > 0 and not hand_detected:
+                send("LID_OPEN")
+                set_angle(90)
+                set_temp_leds("med")
+                speak(random.choice(greetings))
+                hand_detected = True
+                last_time = time.time()
+            elif hand_detected and time.time() - last_time > 8:
+                send("LID_CLOSE")
+                set_angle(0)
+                set_temp_leds("low")
+                speak(random.choice(farewells))
+                send("RESUME")
+                hand_detected = False
+        time.sleep(0.3)
+
+# === CPU TEMPERATURE MONITOR ===
+def get_cpu_temp():
+    try:
+        with open('/sys/class/thermal/thermal_zone0/temp') as f:
+            return int(f.read()) / 1000
+    except:
+        return 0
+
+def temp_monitor():
+    global last_temp_state
+    while True:
+        temp = get_cpu_temp()
+        if temp < 50 and last_temp_state != "low":
+            set_temp_leds("low")
+            speak("Temperature normal")
+            last_temp_state = "low"
+        elif 50 <= temp < 65 and last_temp_state != "med":
+            set_temp_leds("med")
+            speak("Getting warm")
+            last_temp_state = "med"
+        elif temp >= 65 and last_temp_state != "high":
+            set_temp_leds("high")
+            speak("Overheating")
+            last_temp_state = "high"
+        time.sleep(5)
+
+# === BUTTON HOLD CONTROL ===
+def button_hold(cmd, btn):
+    send(cmd)
+    root.after(50, lambda: button_hold(cmd, btn) if btn.instate(['pressed']) else None)
+
+# === GUI ===
+def gui():
+    root = tk.Tk()
+    root.title("Garbage Bot")
+    root.geometry("320x460")
+    root.configure(bg="#f0f0f0")
+
+    tk.Label(root, text="GARBAGE BOT", font=("Arial", 16, "bold"), bg="#f0f0f0").pack(pady=10)
+
+    tk.Label(root, text="Mode", font=("Arial", 12)).pack(pady=5)
+    tk.Button(root, text="AUTO", command=lambda: send("MODE_AUTONOMOUS"), bg="lightgreen", width=20).pack(pady=3)
+    tk.Button(root, text="MANUAL", command=lambda: [send("MODE_REMOTE"), send("STOP")], bg="lightblue", width=20).pack(pady=3)
+
+    tk.Label(root, text="Controls", font=("Arial", 12)).pack(pady=10)
+
+    for text, cmd in [("Forward", "FORWARD"), ("Backward", "BACKWARD"), ("Left", "LEFT"), ("Right", "RIGHT")]:
+        btn = tk.Button(root, text=text, width=20)
+        btn.bind("<ButtonPress-1>", lambda e, c=cmd, b=btn: button_hold(c, b))
+        btn.bind("<ButtonRelease-1>", lambda e: send("STOP"))
+        btn.pack(pady=2)
+
+    tk.Button(root, text="Spin 360°", command=lambda: send("SPIN"), bg="orange", width=20).pack(pady=5)
+
+    tk.Label(root, text="Lid (Manual Only)", font=("Arial", 12)).pack(pady=10)
+    
+    open_btn = tk.Button(root, text="Open Lid", command=lambda: [send("LID_OPEN"), set_angle(90)], width=20, state="disabled")
+    close_btn = tk.Button(root, text="Close Lid", command=lambda: [send("LID_CLOSE"), set_angle(0)], width=20, state="disabled")
+    open_btn.pack(pady=2)
+    close_btn.pack(pady=2)
+
+    def update_lid_buttons():
+        if not autonomous:
+            open_btn.config(state="normal")
+            close_btn.config(state="normal")
+        else:
+            open_btn.config(state="disabled")
+            close_btn.config(state="disabled")
+        root.after(100, update_lid_buttons)
+
+    update_lid_buttons()
+
+    tk.Label(root, text="Hold to move", font=("Arial", 9), fg="gray").pack(pady=10)
+    root.mainloop()
+
+# === MAIN ===
+if __name__ == "__main__":
+    set_temp_leds("low")
+    Thread(target=uart_listener, daemon=True).start()
+    Thread(target=lid_thread, daemon=True).start()
+    Thread(target=temp_monitor, daemon=True).start()
+    gui()
+    servo.stop()
+    GPIO.cleanup()
